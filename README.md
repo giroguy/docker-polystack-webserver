@@ -29,7 +29,7 @@ Most Docker setups handle one type of site. This handles them all:
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/docker-polystack-webserver.git /srv/server
+git clone https://github.com/giroguy/docker-polystack-webserver.git /srv/server
 cd /srv/server
 cp .env.example .env
 nano .env   # fill in passwords
