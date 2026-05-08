@@ -1,0 +1,263 @@
+#!/bin/bash
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NGINX_CONF_DIR="$SCRIPT_DIR/nginx/conf.d"
+TEMPLATES_DIR="$SCRIPT_DIR/nginx/templates"
+STATIC_DIR="$SCRIPT_DIR/static"
+WP_DIR="$SCRIPT_DIR/wordpress"
+SITES_REGISTRY="$SCRIPT_DIR/.sites"
+
+# Ensure registry exists
+touch "$SITES_REGISTRY"
+
+usage() {
+    echo "Usage: ./site <command> [options]"
+    echo ""
+    echo "Commands:"
+    echo "  add     --name <name> --domain <domain> --type <static|react|wordpress|node|fullstack> [--port <port>]"
+    echo "  remove  --name <name>"
+    echo "  list"
+    echo "  ssl     --domain <domain> [--www]"
+    echo ""
+    echo "Examples:"
+    echo "  ./site add --name mysite --domain mysite.com --type static"
+    echo "  ./site add --name myapp --domain myapp.com --type react"
+    echo "  ./site add --name myblog --domain myblog.com --type wordpress"
+    echo "  ./site add --name myapi --domain api.mysite.com --type node --port 3001"
+    echo "  ./site add --name myapp --domain myapp.com --type fullstack --port 3001"
+    echo "  ./site remove --name mysite"
+    echo "  ./site list"
+}
+
+cmd_add() {
+    local NAME="" DOMAIN="" TYPE="" PORT="3000"
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --name)    NAME="$2";   shift 2 ;;
+            --domain)  DOMAIN="$2"; shift 2 ;;
+            --type)    TYPE="$2";   shift 2 ;;
+            --port)    PORT="$2";   shift 2 ;;
+            *) echo "Unknown option: $1"; usage; exit 1 ;;
+        esac
+    done
+
+    [[ -z "$NAME" ]]   && echo "Error: --name is required"   && exit 1
+    [[ -z "$DOMAIN" ]] && echo "Error: --domain is required" && exit 1
+    [[ -z "$TYPE" ]]   && echo "Error: --type is required"   && exit 1
+
+    if grep -q "^$NAME " "$SITES_REGISTRY" 2>/dev/null; then
+        echo "Error: site '$NAME' already exists"
+        exit 1
+    fi
+
+    echo "➤ Adding $TYPE site '$NAME' at $DOMAIN..."
+
+    case $TYPE in
+        static|react)
+            mkdir -p "$STATIC_DIR/$NAME"
+            sed -e "s/{{NAME}}/$NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" \
+                "$TEMPLATES_DIR/static.conf.tmpl" > "$NGINX_CONF_DIR/$NAME.conf"
+            echo "  ✓ Created static dir: static/$NAME"
+            ;;
+        wordpress)
+            mkdir -p "$WP_DIR/$NAME"
+            sed -e "s/{{NAME}}/$NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" \
+                "$TEMPLATES_DIR/wordpress.conf.tmpl" > "$NGINX_CONF_DIR/$NAME.conf"
+            echo "  ✓ Created WordPress dir: wordpress/$NAME"
+            echo "  ✓ Remember to create a MySQL database for this site:"
+            echo "    docker exec -it mysql mysql -u root -p -e \"CREATE DATABASE ${NAME//-/_}; GRANT ALL ON ${NAME//-/_}.* TO 'wordpress'@'%';\""
+            ;;
+        node)
+            sed -e "s/{{NAME}}/$NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" -e "s/{{PORT}}/$PORT/g" \
+                "$TEMPLATES_DIR/node.conf.tmpl" > "$NGINX_CONF_DIR/$NAME.conf"
+            echo "  ✓ Node proxy configured on port $PORT"
+            echo "  ✓ Make sure your Express app is listening on port $PORT in ecosystem.config.js"
+            ;;
+        fullstack)
+            [[ "$PORT" == "3000" ]] && echo "  ⚠  No --port specified, defaulting to 3000. Use --port to set the Express API port."
+            mkdir -p "$STATIC_DIR/$NAME"
+            sed -e "s/{{NAME}}/$NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" -e "s/{{PORT}}/$PORT/g" \
+                "$TEMPLATES_DIR/fullstack.conf.tmpl" > "$NGINX_CONF_DIR/$NAME.conf"
+            echo "  ✓ Created static dir: static/$NAME"
+            echo "  ✓ Fullstack vhost: static files + /api proxied to port $PORT"
+            echo "  ✓ Make sure your Express app is listening on port $PORT in ecosystem.config.js"
+            ;;
+        *)
+            echo "Error: unknown type '$TYPE'. Use: static, react, wordpress, node, fullstack"
+            exit 1
+            ;;
+    esac
+
+    # Register site
+    echo "$NAME $DOMAIN $TYPE $PORT" >> "$SITES_REGISTRY"
+
+    # Reload Nginx (zero downtime)
+    echo "  ↻ Reloading Nginx..."
+    docker exec nginx nginx -s reload
+
+    # Remind user to add .local domain to /etc/hosts (or hosts manager)
+    if [[ "$DOMAIN" == *.local ]]; then
+        if grep -q "$DOMAIN" /etc/hosts 2>/dev/null; then
+            echo "  ✓ $DOMAIN already in /etc/hosts"
+        else
+            echo "  ⚠  Add to /etc/hosts to test locally:"
+            echo "     127.0.0.1 $DOMAIN"
+            echo "  (On macOS you can use a hosts manager like Gas Mask or just edit /etc/hosts directly)"
+        fi
+    fi
+
+    echo ""
+    echo "✅ Site '$NAME' added successfully!"
+    if [[ "$DOMAIN" != *.local ]] && [[ "$DOMAIN" != "localhost" ]]; then
+        echo "   Next: run './site ssl --domain $DOMAIN' to provision SSL"
+    fi
+}
+
+cmd_remove() {
+    local NAME=""
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --name) NAME="$2"; shift 2 ;;
+            *) echo "Unknown option: $1"; usage; exit 1 ;;
+        esac
+    done
+
+    [[ -z "$NAME" ]] && echo "Error: --name is required" && exit 1
+
+    if [[ ! -f "$NGINX_CONF_DIR/$NAME.conf" ]]; then
+        echo "Error: no config found for '$NAME'"
+        exit 1
+    fi
+
+    read -p "Remove site '$NAME'? This deletes the Nginx config (not your files). [y/N] " confirm
+    [[ "$confirm" != "y" && "$confirm" != "Y" ]] && echo "Aborted." && exit 0
+
+    rm "$NGINX_CONF_DIR/$NAME.conf"
+    sed -i "/^$NAME /d" "$SITES_REGISTRY"
+
+    docker exec nginx nginx -s reload
+    echo "✅ Site '$NAME' removed. Files in static/$NAME or wordpress/$NAME are untouched."
+}
+
+cmd_list() {
+    if [[ ! -s "$SITES_REGISTRY" ]]; then
+        echo "No sites registered yet."
+        return
+    fi
+
+    printf "%-20s %-35s %-12s %s\n" "NAME" "DOMAIN" "TYPE" "PORT"
+    printf "%-20s %-35s %-12s %s\n" "----" "------" "----" "----"
+    while IFS=" " read -r name domain type port; do
+        printf "%-20s %-35s %-12s %s\n" "$name" "$domain" "$type" "$port"
+    done < "$SITES_REGISTRY"
+}
+
+cmd_ssl() {
+    local DOMAIN="" WWW=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --domain) DOMAIN="$2"; shift 2 ;;
+            --www)    WWW=true; shift ;;
+            *) echo "Unknown option: $1"; usage; exit 1 ;;
+        esac
+    done
+
+    [[ -z "$DOMAIN" ]] && echo "Error: --domain is required" && exit 1
+
+    # Guard against local domains
+    if [[ "$DOMAIN" == *.local ]] || [[ "$DOMAIN" == "localhost" ]]; then
+        echo "Error: SSL is not available for local domains. Skipping."
+        exit 0
+    fi
+
+    echo "➤ Provisioning SSL for $DOMAIN..."
+
+    # Source .env for CERTBOT_EMAIL
+    source "$(pwd)/.env" 2>/dev/null || true
+
+    DOMAINS="-d $DOMAIN"
+    [[ "$WWW" == true ]] && DOMAINS="$DOMAINS -d www.$DOMAIN"
+
+    docker exec certbot certbot certonly \
+        --webroot -w /var/www/certbot \
+        --email "${CERTBOT_EMAIL:-admin@$DOMAIN}" \
+        --agree-tos --no-eff-email \
+        $DOMAINS \
+        --expand \
+        --keep-until-expiring
+
+    # Only auto-update nginx config for sites managed via ./site add (in registry)
+    # Hand-crafted configs are never touched automatically
+    SITE_NAME=$(grep " $DOMAIN " "$SITES_REGISTRY" | awk '{print $1}')
+    SITE_TYPE=$(grep " $DOMAIN " "$SITES_REGISTRY" | awk '{print $3}')
+    SITE_PORT=$(grep " $DOMAIN " "$SITES_REGISTRY" | awk '{print $4}')
+    CONF_FILE="$NGINX_CONF_DIR/${SITE_NAME}.conf"
+
+    if [[ -n "$SITE_NAME" ]] && [[ -f "$CONF_FILE" ]]; then
+        echo "  ↻ Updating nginx config for HTTPS..."
+
+        WWW_NAMES="$DOMAIN"
+        [[ "$WWW" == true ]] && WWW_NAMES="$DOMAIN www.$DOMAIN"
+
+        case $SITE_TYPE in
+            static|react)
+                sed -e "s/{{NAME}}/$SITE_NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" \
+                    "$TEMPLATES_DIR/static.conf.tmpl" > "$CONF_FILE"
+                ;;
+            wordpress)
+                sed -e "s/{{NAME}}/$SITE_NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" \
+                    "$TEMPLATES_DIR/wordpress.conf.tmpl" > "$CONF_FILE"
+                ;;
+            node)
+                sed -e "s/{{NAME}}/$SITE_NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" -e "s/{{PORT}}/$SITE_PORT/g" \
+                    "$TEMPLATES_DIR/node.conf.tmpl" > "$CONF_FILE"
+                ;;
+            fullstack)
+                sed -e "s/{{NAME}}/$SITE_NAME/g" -e "s/{{DOMAIN}}/$DOMAIN/g" -e "s/{{PORT}}/$SITE_PORT/g" \
+                    "$TEMPLATES_DIR/fullstack.conf.tmpl" > "$CONF_FILE"
+                ;;
+        esac
+
+        CONTENT=$(cat "$CONF_FILE")
+        cat > "$CONF_FILE" << EOF
+server {
+    listen 80;
+    server_name $WWW_NAMES;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$DOMAIN\$request_uri;
+    }
+}
+
+$(echo "$CONTENT" | sed "s/listen 80;/listen 443 ssl;/" | sed "s/server_name $DOMAIN;/server_name $WWW_NAMES;\n\n    ssl_certificate     \/etc\/letsencrypt\/live\/$DOMAIN\/fullchain.pem;\n    ssl_certificate_key \/etc\/letsencrypt\/live\/$DOMAIN\/privkey.pem;\n    ssl_protocols       TLSv1.2 TLSv1.3;\n    ssl_ciphers         HIGH:!aNULL:!MD5;/")
+EOF
+        echo "  ✓ Nginx config updated for HTTPS"
+    else
+        echo "  ⚠  Cert issued but nginx config was NOT auto-updated (hand-crafted config)."
+        echo "  ⚠  Manually add the 443 SSL block to nginx/conf.d/ using cert at:"
+        echo "     /etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+    fi
+
+    docker exec nginx nginx -s reload
+    echo "✅ SSL provisioned for $DOMAIN"
+}
+
+# Router
+COMMAND="${1:-}"
+shift || true
+
+case $COMMAND in
+    add)    cmd_add "$@" ;;
+    remove) cmd_remove "$@" ;;
+    list)   cmd_list ;;
+    ssl)    cmd_ssl "$@" ;;
+    *)      usage ;;
+esac

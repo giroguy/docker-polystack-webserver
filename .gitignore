@@ -1,0 +1,50 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Runtime/generated
+.sites
+
+# WordPress site files (deployed from each site's own repo)
+wordpress/*/
+
+# Static/React site files (deployed from each site's own repo)
+static/*/
+
+# Node app repos (deployed from each site's own repo)
+node/*/
+!node/Dockerfile
+!node/ecosystem.config.js
+
+# Go app repos (deployed from each site's own repo)
+go/*/
+
+# MySQL data (managed by Docker volume)
+mysql/data/
+
+# Redis data (managed by Docker volume)
+redis/data/
+
+# Nginx SSL certs (managed by certbot)
+nginx/ssl/
+
+# Certbot webroot
+nginx/certbot-webroot/
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/

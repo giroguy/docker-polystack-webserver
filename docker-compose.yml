@@ -1,0 +1,116 @@
+services:
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./static:/var/www/static:ro
+      - ./wordpress:/var/www/wordpress:ro
+      - certbot-webroot:/var/www/certbot:ro
+      - certbot-certs:/etc/letsencrypt:ro
+    depends_on:
+      - php-fpm
+      - node
+    networks:
+      - web
+
+  php-fpm:
+    build: ./php
+    container_name: php-fpm
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./wordpress:/var/www/wordpress
+      - ./php/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro
+    networks:
+      - web
+      - db
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3306:3306"
+    env_file:
+      - .env
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+      - ./mysql/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    networks:
+      - db
+
+  node:
+    build: ./node
+    container_name: node
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ${PWD}/node:/app
+      - ${PWD}/go:/go
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    networks:
+      - web
+      - db
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    env_file:
+      - .env
+    networks:
+      - db
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    restart: unless-stopped
+    volumes:
+      - certbot-webroot:/var/www/certbot
+      - certbot-certs:/etc/letsencrypt
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+    networks:
+      - web
+
+  sftp:
+    image: atmoz/sftp:alpine
+    platform: linux/amd64
+    container_name: sftp
+    restart: unless-stopped
+    ports:
+      - "2222:22"
+    volumes:
+      - ./static:/home/deploy/static
+      - ./wordpress:/home/deploy/wordpress
+      - ./node:/home/deploy/node
+      - ./sftp/authorized_keys:/home/deploy/.ssh/authorized_keys:ro
+    command: deploy:*:1000:1000
+
+volumes:
+  mysql-data:
+  redis-data:
+  certbot-webroot:
+  certbot-certs:
+
+networks:
+  web:
+    driver: bridge
+  db:
+    driver: bridge

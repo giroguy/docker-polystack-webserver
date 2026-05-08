@@ -1,0 +1,51 @@
+# .github/workflows/deploy.yml
+# Copy this to each full-stack Vite + Express repo
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+        env:
+          # Add VITE_ prefixed env vars here as GitHub secrets
+          # VITE_WHATEVER: ${{ secrets.VITE_WHATEVER }}
+
+      - name: Deploy frontend
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: deploy
+          key: ${{ secrets.SSH_DEPLOY_KEY }}
+          source: "dist/"
+          target: "/srv/server/static/YOUR_SITE_NAME"
+          strip_components: 1
+
+      - name: Deploy backend
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: deploy
+          key: ${{ secrets.SSH_DEPLOY_KEY }}
+          script: |
+            cd /srv/server/node/YOUR_SITE_NAME
+            git pull origin main
+            npm ci --omit=dev
+            docker exec node pm2 restart YOUR_SITE_NAME

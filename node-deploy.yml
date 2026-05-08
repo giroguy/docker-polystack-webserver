@@ -1,0 +1,36 @@
+# .github/workflows/deploy.yml
+# Copy this to your Node/Express service repo
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy files
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ vars.SERVER_HOST }}
+          username: deploy
+          key: ${{ secrets.SSH_DEPLOY_KEY }}
+          source: ".,!.git,!node_modules,!.env"
+          target: /srv/server/node/YOUR_SERVICE_NAME
+          strip_components: 1
+          overwrite: true
+
+      - name: Install and restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.SERVER_HOST }}
+          username: deploy
+          key: ${{ secrets.SSH_DEPLOY_KEY }}
+          script: |
+            docker exec node sh -c "cd /app/YOUR_SERVICE_NAME && npm install --omit=dev"
+            docker exec node pm2 restart YOUR_SERVICE_NAME

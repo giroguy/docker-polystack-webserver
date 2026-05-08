@@ -1,0 +1,42 @@
+# .github/workflows/deploy.yml
+# Copy this to each static/React site repo and fill in the env vars
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # -- For React sites: build first
+      # Remove these two steps for plain static HTML sites
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: ${{ secrets.API_URL }}
+          # Add any other build-time env vars here
+
+      # -- Deploy built files (use 'dist' for React, '.' for static HTML)
+      - name: Deploy
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: deploy
+          key: ${{ secrets.SSH_DEPLOY_KEY }}
+          source: "dist/"          # Change to '.' for static HTML, adjust for your build output dir
+          target: "/var/www/static/YOUR_SITE_NAME"   # Match the --name used in ./site add
+          strip_components: 1      # Removes the 'dist/' prefix so files land directly in target
