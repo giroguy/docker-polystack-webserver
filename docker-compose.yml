@@ -4,6 +4,19 @@ services:
     image: nginx:alpine
     container_name: nginx
     restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        nginx -g 'daemon off;' &
+        NGINX_PID=$$!
+        trap "nginx -s quit; wait $$NGINX_PID" TERM INT
+        LAST=0
+        while kill -0 $$NGINX_PID 2>/dev/null; do
+          sleep 5m & wait $$!
+          T=$$(stat -c '%Y' /var/www/certbot/.renewed 2>/dev/null || echo 0)
+          [ "$$T" -gt "$$LAST" ] && nginx -s reload && LAST=$$T
+        done
     ports:
       - "80:80"
       - "443:443"
@@ -85,7 +98,16 @@ services:
     volumes:
       - certbot-webroot:/var/www/certbot
       - certbot-certs:/etc/letsencrypt
-    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        trap exit TERM
+        while :; do
+          certbot renew --webroot -w /var/www/certbot --quiet \
+            --deploy-hook 'touch /var/www/certbot/.renewed'
+          sleep 12h & wait $$!
+        done
     networks:
       - web
 
