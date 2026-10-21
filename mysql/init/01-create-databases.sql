@@ -1,9 +1,6 @@
--- WordPress shared user (used by all WP sites via getenv in wp-config.php)
--- Update password to match MYSQL_PASSWORD in .env
-CREATE USER IF NOT EXISTS 'wordpress'@'%' IDENTIFIED BY 'changeme';
-
--- Add one entry per WordPress site:
+-- One database per WordPress site. Runs only when the MySQL volume is first created.
+-- Each site gets its own MySQL user that can only reach its own database. Create users by hand
+-- (see README → WordPress) and keep their passwords out of this repo.
+--
+-- Add one line per site:
 -- CREATE DATABASE IF NOT EXISTS `mysite` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
--- GRANT ALL PRIVILEGES ON `mysite`.* TO 'wordpress'@'%';
-
-FLUSH PRIVILEGES;

@@ -112,18 +112,71 @@ React apps (`--type react`) use `try_files` for client-side routing — same ngi
 ```
 
 Then:
-1. Create the database in `mysql/init/01-create-databases.sql` and restart MySQL
-2. Deploy WordPress files to `wordpress/myblog/`
-3. Configure `wp-config.php` to use `getenv()` for DB credentials:
 
-```php
-define('DB_NAME',     'myblog');
-define('DB_USER',     getenv('MYSQL_USER'));
-define('DB_PASSWORD', getenv('MYSQL_PASSWORD'));
-define('DB_HOST',     'mysql');
-define('WP_HOME',     'https://myblog.com');
-define('WP_SITEURL',  'https://myblog.com');
+1. **Create the database and its own user.** Each site gets a MySQL user that can only reach its own database. Generate a password with `openssl rand -hex 24` and keep it in your password manager. Then run this, replacing `PASTE_PASSWORD`:
+
+   ```bash
+   docker exec -it mysql mysql -u root -p -e "CREATE DATABASE myblog CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; CREATE USER 'myblog_wp'@'%' IDENTIFIED BY 'PASTE_PASSWORD'; GRANT ALL ON myblog.* TO 'myblog_wp'@'%'; FLUSH PRIVILEGES;"
+   ```
+
+   Also add the `CREATE DATABASE` line (not the user or password) to `mysql/init/01-create-databases.sql`, so it's recreated if the volume ever is. A command with a password in it stays in your shell history, so remove it afterwards (for example with `history -d`).
+
+2. **Deploy the WordPress files** to `wordpress/myblog/`.
+
+3. **Write `wp-config.php` with the site's own login.** The `php-fpm` container gets no `.env`, so PHP can't read the server's other secrets:
+
+   ```php
+   define('DB_NAME',     'myblog');
+   define('DB_USER',     'myblog_wp');
+   define('DB_PASSWORD', 'the password from step 1');
+   define('DB_HOST',     'mysql');
+   define('WP_HOME',     'https://myblog.com');
+   define('WP_SITEURL',  'https://myblog.com');
+
+   define('DISALLOW_FILE_EDIT', true);   // no theme/plugin code editor in wp-admin
+   define('FORCE_SSL_ADMIN',    true);
+   ```
+
+   Get fresh keys and salts from https://api.wordpress.org/secret-key/1.1/salt/.
+
+4. **Set ownership so PHP can only write to uploads.** PHP runs as `www-data`, which is uid 82 in the alpine image:
+
+   ```bash
+   chown -R deploy:deploy wordpress/myblog
+   find wordpress/myblog -type d -exec chmod 755 {} +
+   find wordpress/myblog -type f -exec chmod 644 {} +
+   chown -R 82:82 wordpress/myblog/wp-content/uploads
+   chown deploy:82 wordpress/myblog/wp-config.php && chmod 640 wordpress/myblog/wp-config.php
+   ```
+
+   PHP can't modify the site's code, so even a compromised plugin can't plant files outside `uploads`. The nginx template also refuses to run any `.php` file under `wp-content/uploads`. The trade-off is that plugin and core updates from wp-admin won't work. Run them with wp-cli instead:
+
+   ```bash
+   docker exec php-fpm wp --path=/var/www/wordpress/myblog --allow-root plugin update --all
+   docker exec php-fpm wp --path=/var/www/wordpress/myblog --allow-root core update
+   ```
+
+   wp-cli writes those files as root, so re-run the `chown` lines afterwards.
+
+### Updating PHP
+
+`php/Dockerfile` pins an exact patch release (for example `php:8.2.35-fpm-alpine`), so a rebuild never silently stays on an unpatched image. When PHP ships a security release, bump the tag and rebuild. If the new tag isn't on Docker Hub yet, the build fails loudly. Official images usually appear a few hours after the php.net release.
+
+**On a 1–2 GB VPS, build the image on another machine.** Compiling the extensions (opcache in particular) can use all the memory on a small server with no swap, to the point where SSH stops responding. Build on your laptop and copy the image across:
+
+```bash
+# on your machine (add --platform linux/amd64 if it's Apple silicon and the server is x86)
+docker build --platform linux/amd64 -t server-php-fpm ./php
+docker save server-php-fpm | gzip | ssh root@YOUR_SERVER "gunzip | docker load"
+
+# on the server. Compose expects the image to be called <project folder>-php-fpm,
+# which is server-php-fpm if you cloned into /srv/server as in Quick Start.
+docker compose up -d --no-build --no-deps php-fpm
+docker exec nginx nginx -s reload
+docker exec php-fpm php -v
 ```
+
+**Reload nginx whenever you recreate `php-fpm` or `node`.** The vhosts use `fastcgi_pass php-fpm:9000` and `proxy_pass http://node:…` with no `resolver`, so nginx keeps the old container IP until it reloads, and the sites return 502 in the meantime. Also, `nginx -t` fails with "host not found in upstream" while `php-fpm` is stopped, so start it first.
 
 ### Node.js Service
 
