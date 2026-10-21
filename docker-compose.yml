@@ -37,8 +37,7 @@ services:
     build: ./php
     container_name: php-fpm
     restart: unless-stopped
-    env_file:
-      - .env
+    # No env_file: PHP must not see the server's secrets. Each site's wp-config.php holds its own DB login.
     volumes:
       - ./wordpress:/var/www/wordpress
       - ./php/php.ini:/usr/local/etc/php/conf.d/custom.ini:ro

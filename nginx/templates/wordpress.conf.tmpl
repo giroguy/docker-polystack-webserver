@@ -9,6 +9,9 @@ server {
         try_files $uri $uri/ /index.php?$args;
     }
 
+    # Never run PHP from uploads (blocks uploaded backdoors). Must sit above the .php block.
+    location ~* ^/wp-content/uploads/.*\.php$ { deny all; }
+
     location ~ \.php$ {
         fastcgi_pass   php-fpm:9000;
         fastcgi_index  index.php;
