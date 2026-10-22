@@ -162,16 +162,28 @@ Then:
 
 `php/Dockerfile` pins an exact patch release (for example `php:8.2.35-fpm-alpine`), so a rebuild never silently stays on an unpatched image. When PHP ships a security release, bump the tag and rebuild. If the new tag isn't on Docker Hub yet, the build fails loudly. Official images usually appear a few hours after the php.net release.
 
-**On a 1–2 GB VPS, build the image on another machine.** Compiling the extensions (opcache in particular) can use all the memory on a small server with no swap, to the point where SSH stops responding. Build on your laptop and copy the image across:
+**Normal update.** Run this on the server, from the project folder:
 
 ```bash
-# on your machine (add --platform linux/amd64 if it's Apple silicon and the server is x86)
-docker build --platform linux/amd64 -t server-php-fpm ./php
-docker save server-php-fpm | gzip | ssh root@YOUR_SERVER "gunzip | docker load"
+git pull                                   # gets the new pinned version
+docker compose build --pull php-fpm        # builds polystack-php-fpm from the fresh base image
+docker compose up -d --no-deps php-fpm     # replaces the running container
+docker exec nginx nginx -s reload          # nginx must find the new container
+docker exec php-fpm php -v                 # confirm the version
+```
 
-# on the server. Compose expects the image to be called <project folder>-php-fpm,
-# which is server-php-fpm if you cloned into /srv/server as in Quick Start.
-docker compose up -d --no-build --no-deps php-fpm
+`docker compose restart` and a plain `docker compose up -d` **won't** pick up a new PHP version. The first keeps the old container, and the second won't rebuild an image that already exists.
+
+**Small servers (1–2 GB RAM, no swap): build on another machine.** Compiling the extensions (opcache in particular) can use all the memory, to the point where SSH stops responding. Build on your laptop instead, and copy the image across. The image is always called `polystack-php-fpm` (set in `docker-compose.yml`), so the name matches whatever your project folder is called:
+
+```bash
+# on your machine, from a checkout of this repo
+# (--platform linux/amd64 matters if your machine is Apple silicon and the server is x86)
+docker build --platform linux/amd64 -t polystack-php-fpm ./php
+docker save polystack-php-fpm | gzip | ssh root@YOUR_SERVER "gunzip | docker load"
+
+# on the server
+docker compose up -d --no-build --no-deps php-fpm   # --no-build: don't compile here
 docker exec nginx nginx -s reload
 docker exec php-fpm php -v
 ```
