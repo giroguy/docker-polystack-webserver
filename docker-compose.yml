@@ -35,6 +35,8 @@ services:
 
   php-fpm:
     build: ./php
+    # Fixed image name, so it doesn't depend on the project folder name (see README → Updating PHP)
+    image: polystack-php-fpm
     container_name: php-fpm
     restart: unless-stopped
     # No env_file: PHP must not see the server's secrets. Each site's wp-config.php holds its own DB login.

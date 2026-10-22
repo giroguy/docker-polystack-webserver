@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/): **major** for changes that need action on existing servers, **minor** for new features, **patch** for fixes.
 
+## [2.0.1] - 2026-10-22
+
+### Fixed
+- The PHP image now has a fixed name, `polystack-php-fpm` (`image:` in `docker-compose.yml`). Before, Compose named it after the project folder, so an image built elsewhere with a different name, or a folder not called `server`, left the old PHP container running.
+- README → Updating PHP now leads with the normal on-server update (`docker compose build --pull php-fpm` then `up -d --no-deps php-fpm`). Building on another machine is now the option for small servers, and the section explains why `restart` or a plain `up -d` doesn't change the PHP version.
+
+### Upgrading from 2.0.0
+`git pull`, then run the **Normal update** in README → Updating PHP. The first build creates `polystack-php-fpm`. The old `<folder>-php-fpm` image can be removed afterwards with `docker image rm <folder>-php-fpm`.
+
 ## [2.0.0] - 2026-10-21
 
 **Breaking:** `php-fpm` no longer loads `.env`, so a `wp-config.php` that reads its database login with `getenv('MYSQL_USER')` / `getenv('MYSQL_PASSWORD')` stops working. Follow [Upgrading from 1.x](#upgrading-from-1x) **before** pulling this release onto an existing server.
@@ -61,6 +70,7 @@ Do these steps in order. Steps 1 and 2 work on 1.x, so the sites stay up through
 - The `./site` CLI for adding, removing and listing sites, with Let's Encrypt SSL.
 - GitHub Actions deploy templates, and a nightly MySQL backup script.
 
+[2.0.1]: https://github.com/giroguy/docker-polystack-webserver/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/giroguy/docker-polystack-webserver/compare/v1.1...v2.0.0
 [1.1]: https://github.com/giroguy/docker-polystack-webserver/compare/v1.0...v1.1
 [1.0]: https://github.com/giroguy/docker-polystack-webserver/releases/tag/v1.0
